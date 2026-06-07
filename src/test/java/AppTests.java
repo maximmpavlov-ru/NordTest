@@ -6,6 +6,9 @@ import org.apache.http.HttpStatus;
 import org.junit.jupiter.api.*;
 import restAPI.RestAPIRequests;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
@@ -15,6 +18,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 
 public class AppTests {
     private static WireMockServer wireMockServer;
+    static List<String> tokens = new ArrayList<>();
 
     @BeforeAll
     @DisplayName("Запуск WireMock сервера для обработки запросов")
@@ -41,29 +45,35 @@ public class AppTests {
     }
 
     @AfterAll
-    @DisplayName("Остановка WireMock сервера после прохождения тестов, если он запущен")
-    public static void stopWireMock() {
+    @DisplayName("Остановка WireMock сервера после прохождения тестов, если он запущен, и очистка тестовых данных")
+    public static void stopWireMockAndClearData() {
         if (wireMockServer != null) {
             wireMockServer.stop();
+        }
+        for (String token : tokens) {
+            RestAPIRequests.sendPostRequest(token, Actions.LOGOUT);
         }
     }
 
     @Test
     @DisplayName("Попытка повторного использования токена, который уже зарегистрирован")
     public void doubleAuthenticationAttempt() {
-        String token = Tokens.generateToken();
+        String token = Tokens.generateCorrectToken();
         RestAPIRequests.sendPostRequest(token, Actions.LOGIN);
         ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(token, Actions.LOGIN);
         int statusCode = requestResponse.extract().statusCode();
+        tokens.add(token);
 
         Assertions.assertEquals(HttpStatus.SC_CONFLICT, statusCode, "Неправильный код ответа. Ожидается код 409");
     }
 
     @Test
-    @DisplayName("Успешная аунтефикация по токену")
+    @DisplayName("Успешная аутентификация по токену")
     public void successfulAuthentication() {
-        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateToken(), Actions.LOGIN);
+        String token = Tokens.generateCorrectToken();
+        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(token, Actions.LOGIN);
         int statusCode = requestResponse.extract().statusCode();
+        tokens.add(token);
 
         Assertions.assertEquals(HttpStatus.SC_OK, statusCode, "Неправильный код ответа. Ожидается код 200");
     }
@@ -71,7 +81,7 @@ public class AppTests {
     @Test
     @DisplayName("Попытка аутентификации с токеном некорректного формата")
     public void attemptToAuthenticateWithIncorrectToken() {
-        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateIncorrectToken(), Actions.LOGIN);
+        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateShortToken(), Actions.LOGIN);
         int statusCode = requestResponse.extract().statusCode();
 
         Assertions.assertEquals(HttpStatus.SC_BAD_REQUEST, statusCode, "Неправильный код ответа. Ожидается код 400");
@@ -89,7 +99,7 @@ public class AppTests {
     @Test
     @DisplayName("Успешное завершение сессии пользователя")
     public void successfulLogout() {
-        String token = Tokens.generateToken();
+        String token = Tokens.generateCorrectToken();
         RestAPIRequests.sendPostRequest(token, Actions.LOGIN);
         ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(token, Actions.LOGOUT);
         int statusCode = requestResponse.extract().statusCode();
@@ -98,9 +108,9 @@ public class AppTests {
     }
 
     @Test
-    @DisplayName("Попытка завершения сессии с незарегистирванным токеном")
+    @DisplayName("Попытка завершения сессии с незарегистрированным токеном")
     public void attemptToLogoutWithUnknownToken() {
-        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateToken(), Actions.LOGOUT);
+        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateCorrectToken(), Actions.LOGOUT);
         int statusCode = requestResponse.extract().statusCode();
 
         Assertions.assertEquals(HttpStatus.SC_FORBIDDEN, statusCode, "Неправильный код ответа. Ожидается код 403");
@@ -110,6 +120,15 @@ public class AppTests {
     @DisplayName("Попытка завершения сессии без указания токена")
     public void attemptToLogoutWithoutToken() {
         ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest("", Actions.LOGOUT);
+        int statusCode = requestResponse.extract().statusCode();
+
+        Assertions.assertEquals(HttpStatus.SC_BAD_REQUEST, statusCode, "Неправильный код ответа. Ожидается код 400");
+    }
+
+    @Test
+    @DisplayName("Попытка завершения сессии с токеном некорректной длины")
+    public void attemptToLogoutWithShortToken() {
+        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateShortToken(), Actions.LOGOUT);
         int statusCode = requestResponse.extract().statusCode();
 
         Assertions.assertEquals(HttpStatus.SC_BAD_REQUEST, statusCode, "Неправильный код ответа. Ожидается код 400");
@@ -136,10 +155,11 @@ public class AppTests {
     @Test
     @DisplayName("Успешное обращение к ручке /action")
     public void successfulActionUsage() {
-        String token = Tokens.generateToken();
+        String token = Tokens.generateCorrectToken();
         RestAPIRequests.sendPostRequest(token, Actions.LOGIN);
         ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(token, Actions.ACTION);
         int statusCode = requestResponse.extract().statusCode();
+        tokens.add(token);
 
         Assertions.assertEquals(HttpStatus.SC_OK, statusCode, "Неправильный код ответа. Ожидается код 200");
     }
@@ -147,7 +167,7 @@ public class AppTests {
     @Test
     @DisplayName("Попытка обращения к ручке /action с незарегистрированным токеном")
     public void ActionUsageWithUnknowToken() {
-        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateToken(), Actions.ACTION);
+        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateCorrectToken(), Actions.ACTION);
         int statusCode = requestResponse.extract().statusCode();
 
         Assertions.assertEquals(HttpStatus.SC_FORBIDDEN, statusCode, "Неправильный код ответа. Ожидается код 403");
@@ -156,7 +176,7 @@ public class AppTests {
     @Test
     @DisplayName("Попытка обращения к ручке /action с токеном неправильного формата")
     public void ActionUsageWithIncorrectToken() {
-        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateIncorrectToken(), Actions.ACTION);
+        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateShortToken(), Actions.ACTION);
         int statusCode = requestResponse.extract().statusCode();
 
         Assertions.assertEquals(HttpStatus.SC_BAD_REQUEST, statusCode, "Неправильный код ответа. Ожидается код 400");
@@ -165,7 +185,7 @@ public class AppTests {
     @Test
     @DisplayName("Попытка отправки запроса с некорректным параметром 'action'")
     public void requestAttemptWithUnknowActionType() {
-        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateToken(), "BadValue");
+        ValidatableResponse requestResponse = RestAPIRequests.sendPostRequest(Tokens.generateCorrectToken(), "BadValue");
         int statusCode = requestResponse.extract().statusCode();
         Assertions.assertEquals(HttpStatus.SC_BAD_REQUEST, statusCode, "Неправильный код ответа. Ожидается код 400");
     }
